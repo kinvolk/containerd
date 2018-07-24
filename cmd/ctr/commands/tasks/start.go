@@ -82,7 +82,7 @@ var startCommand = cli.Command{
 				return err
 			}
 		}
-		defer task.Delete(ctx)
+		//defer task.Delete(ctx)
 		if context.IsSet("pid-file") {
 			if err := commands.WritePidFile(context.String("pid-file"), int(task.Pid())); err != nil {
 				return err
@@ -118,9 +118,9 @@ var startCommand = cli.Command{
 		if err != nil {
 			return err
 		}
-		if _, err := task.Delete(ctx); err != nil {
-			return err
-		}
+		//if _, err := task.Delete(ctx); err != nil {
+		//	return err
+		//}
 		if code != 0 {
 			return cli.NewExitError("", int(code))
 		}
