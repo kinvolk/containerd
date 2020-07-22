@@ -17,7 +17,9 @@ limitations under the License.
 package server
 
 import (
+	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +44,8 @@ import (
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+
+	"github.com/opencontainers/runc/libcontainer/system"
 )
 
 const (
@@ -176,6 +180,14 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	log.G(ctx).Debugf("Container %q spec: %#+v", id, spew.NewFormatter(spec))
 
 	securityContext := config.GetLinux().GetSecurityContext()
+
+	if securityContext.GetNamespaceOptions().GetUser() == runtime.NamespaceMode_POD {
+		if err := checkMounts(c.config.NodeWideUIDMapping.HostID,
+			c.config.NodeWideGIDMapping.HostID, spec.Mounts); err != nil {
+				return nil, err
+			}
+
+	}
 
 	var snapshotterOption containerd.NewContainerOpts
 	switch securityContext.GetNamespaceOptions().GetUser() {
@@ -666,4 +678,57 @@ func generateUserString(username string, uid, gid *runtime.Int64Value) (string, 
 		userstr = userstr + ":" + groupstr
 	}
 	return userstr, nil
+}
+
+// checkMounts verifies that the user is able to stat the sources of the
+// paths to mount.
+func checkMounts(uid, gid uint32, mounts []runtimespec.Mount) error {
+	c := make(chan error)
+	go doCheckMounts(uid, gid, mounts, c)
+
+	return <- c
+}
+
+func doCheckMounts(uid, gid uint32, mounts []runtimespec.Mount, c chan error)  {
+	goruntime.LockOSThread()
+	// Do not call goruntime.UnLockOSThread because it'll make the thread
+	// usable by other goroutines but it'll be running in a wrong uid/gid.
+	// Avoiding that call causes the thread to terminate instead.
+
+	// set uid to nobody to check if group access is ok
+	if err := system.Setgid(int(gid)); err != nil {
+		c <- err
+	}
+
+	if err := system.Setuid(int(uid)); err != nil {
+		c <- err
+	}
+
+	for _, m := range mounts {
+		if m.Type != "bind" {
+			continue
+		}
+		if str := checkMountPath(m.Source); str != "" {
+			c <- errors.Errorf("cannot stat %q while running with uid %d and gid %d. Check file permissions or supplementary groups",
+				str, uid, gid)
+			return
+		}
+	}
+
+	c <- nil
+}
+
+func checkMountPath(path string) string {
+	pathList := strings.Split(path, string(os.PathSeparator))
+
+	pathTemp := pathList[0]
+
+	for _, p := range pathList[1:] {
+		pathTemp = pathTemp + string(os.PathSeparator) + p
+		if _, err := os.Stat(pathTemp); err != nil {
+			return pathTemp
+		}
+	}
+
+	return ""
 }
