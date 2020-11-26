@@ -488,6 +488,7 @@ func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
 	}
 
 	options = append(options, fmt.Sprintf("lowerdir=%s", strings.Join(parentPaths, ":")))
+	//options = append(options, "volatile")
 	return []mount.Mount{
 		{
 			Type:    "overlay",

@@ -62,6 +62,13 @@ func (m *Mount) Mount(target string) error {
 		chdir, options = compactLowerdirOption(options)
 	}
 
+	fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXX")
+	fmt.Println("target is:", target)
+	options = append(options, "")
+	fmt.Println("options", options)
+
+	fmt.Println("XXXXXXXXXXXXXXXXXXXXXXXX")
+
 	flags, data := parseMountOptions(options)
 	if len(data) > pagesize {
 		return errors.Errorf("mount options is too long")
@@ -372,6 +379,10 @@ func (m *Mount) mountWithHelper(helperBinary, typePrefix, target string) error {
 	args := []string{m.Source, target}
 	for _, o := range m.Options {
 		args = append(args, "-o", o)
+		// XXX: rata. hardcode -o volatile here if
+		if o == "lowerdir" {
+			args = append(args, "-o", "volatile")
+		}
 	}
 	args = append(args, "-t", strings.TrimPrefix(m.Type, typePrefix))
 
