@@ -18,6 +18,7 @@ package opts
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
@@ -76,6 +77,20 @@ func WithVolumes(volumeMounts map[string]string) containerd.NewContainerOpts {
 		// refer to https://github.com/containerd/containerd/pull/1868
 		// https://github.com/containerd/containerd/pull/1785
 		defer os.Remove(root) // nolint: errcheck
+
+		// XXX: rata hack
+		for _, m := range mounts {
+			if m.Type != "overlay" {
+				continue
+			}
+
+			fmt.Println("XXXXXXXXXXX")
+			fmt.Println("Adding volatile")
+			fmt.Println("XXXXXXXXXXX")
+
+			m.Options = append(m.Options, "volatile")
+		}
+
 		if err := mount.All(mounts, root); err != nil {
 			return errors.Wrap(err, "failed to mount")
 		}
