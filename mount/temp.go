@@ -59,6 +59,22 @@ func WithTempMount(ctx context.Context, mounts []Mount, f func(root string) erro
 			}
 		}
 	}()
+
+	// The volatile option of overlayfs doesn't allow to mount again using the
+	// same upper / work dirs. Since it's a temp mount, avoid using that
+	// option here.
+	for _, m := range mounts {
+		if m.Type != "overlay" {
+			continue
+		}
+		for i, opt := range m.Options {
+			if opt == "volatile" {
+				m.Options[i] = ""
+				break
+			}
+		}
+	}
+
 	if uerr = All(mounts, root); uerr != nil {
 		return errors.Wrapf(uerr, "failed to mount %s", root)
 	}
