@@ -65,18 +65,18 @@ func WithTempMount(ctx context.Context, mounts []Mount, f func(root string) erro
 	mounts2 := make([]Mount, len(mounts))
 	copy(mounts2, mounts)
 
-	for _, m := range mounts2 {
-		if m.Type != "overlay" {
-			continue
-		}
+	//for _, m := range mounts2 {
+	//	if m.Type != "overlay" {
+	//		continue
+	//	}
 
-		for i, opt := range m.Options {
-			if opt == "volatile" {
-				log.G(ctx).Infof("removing volatile")
-				m.Options[i] = ""
-			}
-		}
-	}
+	//	for i, opt := range m.Options {
+	//		if opt == "volatile" {
+	//			log.G(ctx).Infof("removing volatile")
+	//			m.Options[i] = ""
+	//		}
+	//	}
+	//}
 	/* hack to remove volatile ends */
 	if uerr = All(mounts2, root); uerr != nil {
 		return errors.Wrapf(uerr, "failed to mount %s", root)
