@@ -38,6 +38,7 @@ import (
 // SnapshotterConfig is used to configure the overlay snapshotter instance
 type SnapshotterConfig struct {
 	asyncRemove bool
+	volatile    bool
 }
 
 // Opt is an option to configure the overlay snapshotter
@@ -52,11 +53,19 @@ func AsynchronousRemove(config *SnapshotterConfig) error {
 	return nil
 }
 
+// Volatile enables the volatile option of overlayfs to ommit all
+// forms of sync calls to the upper layer filesystem.
+func Volatile(config *SnapshotterConfig) error {
+	config.volatile = true
+	return nil
+}
+
 type snapshotter struct {
 	root        string
 	ms          *storage.MetaStore
 	asyncRemove bool
 	indexOff    bool
+	volatile    bool
 }
 
 // NewSnapshotter returns a Snapshotter which uses overlayfs. The overlayfs
@@ -100,6 +109,7 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 		ms:          ms,
 		asyncRemove: config.asyncRemove,
 		indexOff:    indexOff,
+		volatile:    config.volatile,
 	}, nil
 }
 
@@ -462,6 +472,10 @@ func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
 	// set index=off when mount overlayfs
 	if o.indexOff {
 		options = append(options, "index=off")
+	}
+
+	if o.volatile {
+		options = append(options, "volatile")
 	}
 
 	if s.Kind == snapshots.KindActive {
