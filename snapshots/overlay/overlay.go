@@ -469,6 +469,8 @@ func (o *snapshotter) mounts(s storage.Snapshot) []mount.Mount {
 	}
 	var options []string
 
+	options = append(options, "metacopy=on")
+
 	// set index=off when mount overlayfs
 	if o.indexOff {
 		options = append(options, "index=off")
