@@ -24,11 +24,14 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/containerd/containerd/containers"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/mount"
 	"github.com/opencontainers/image-spec/identity"
+
+	"github.com/sirupsen/logrus"
 )
 
 // WithRemappedSnapshot creates a new snapshot and remaps the uid/gid for the
@@ -97,7 +100,18 @@ func withRemappedSnapshotBase(id string, i Image, uid, gid uint32, readonly bool
 
 func remapRootFS(ctx context.Context, mounts []mount.Mount, uid, gid uint32) error {
 	return mount.WithTempMount(ctx, mounts, func(root string) error {
-		return filepath.Walk(root, incrementFS(root, uid, gid))
+
+		before := time.Now()
+
+		//logrus.Infof("starting to remap")
+		err := filepath.Walk(root, incrementFS(root, uid, gid))
+		logrus.Infof("remap done")
+
+		now := time.Now()
+
+		logrus.Infof("remapping took %s", now.Sub(before))
+
+		return err
 	})
 }
 
