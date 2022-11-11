@@ -255,8 +255,8 @@ func (c *criService) RunPodSandbox(ctx context.Context, r *runtime.RunPodSandbox
 	}
 
 	userNsEnabled := false
-	if goruntime.GOOS != "windows" &&
-		config.GetLinux().GetSecurityContext().GetNamespaceOptions().GetUsernsOptions().GetMode() == runtime.NamespaceMode_POD {
+	usernsOpts := config.GetLinux().GetSecurityContext().GetNamespaceOptions().GetUsernsOptions()
+	if goruntime.GOOS != "windows" && usernsOpts != nil && usernsOpts.GetMode() == runtime.NamespaceMode_POD {
 		userNsEnabled = true
 	}
 
