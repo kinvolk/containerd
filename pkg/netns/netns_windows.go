@@ -17,14 +17,17 @@
 package netns
 
 import "github.com/Microsoft/hcsshim/hcn"
+import "errors"
+
+var errNotImplementedOnUnix = errors.New("not implemented on windows")
 
 // NetNS holds network namespace for sandbox
 type NetNS struct {
 	path string
 }
 
-// NewNetNS creates a network namespace for the sandbox
-func NewNetNS(baseDir string) (*NetNS, error) {
+// NewNetNS creates a network namespace for the sandbox.
+func NewNetNS(baseDir string, pid uint32) (*NetNS, error) {
 	temp := hcn.HostComputeNamespace{}
 	hcnNamespace, err := temp.Create()
 	if err != nil {
@@ -32,6 +35,10 @@ func NewNetNS(baseDir string) (*NetNS, error) {
 	}
 
 	return &NetNS{path: hcnNamespace.Id}, nil
+}
+
+func NewNetNSFromPID(baseDir string, pid uint32) (*NetNS, error) {
+	return nil, errNotImplementedOnUnix
 }
 
 // LoadNetNS loads existing network namespace.

@@ -35,6 +35,10 @@ func NewNetNS(baseDir string) (*NetNS, error) {
 	return nil, errNotImplementedOnUnix
 }
 
+func NewNetNSFromPID(baseDir string, pid uint32) (*NetNS, error) {
+	return nil, errNotImplementedOnUnix
+}
+
 // LoadNetNS loads existing network namespace.
 func LoadNetNS(path string) *NetNS {
 	return &NetNS{path: path}
