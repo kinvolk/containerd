@@ -312,9 +312,19 @@ func (c *criService) containerSpec(
 		targetPid = status.Pid
 	}
 
+	// XXX: rata. Here we should check the uid/gid mappings are things that
+	// we can handle: only one line. In the future we should check the
+	// length too.
+	uids, gids, err := c.validateUserns(nsOpts.GetUsernsOptions())
+	if err != nil {
+		// XXX: rata. Seria comodo wrapear aca, para saber cuando son
+		// las distintas funciones las que fallan?
+		return nil, err
+	}
+
 	specOpts = append(specOpts,
 		customopts.WithOOMScoreAdj(config, c.config.RestrictOOMScoreAdj),
-		customopts.WithPodNamespaces(securityContext, sandboxPid, targetPid),
+		customopts.WithPodNamespaces(securityContext, sandboxPid, targetPid, uids, gids),
 		customopts.WithSupplementalGroups(supplementalGroups),
 		customopts.WithAnnotation(annotations.ContainerType, annotations.ContainerTypeContainer),
 		customopts.WithAnnotation(annotations.SandboxID, sandboxID),
