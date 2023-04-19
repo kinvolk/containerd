@@ -45,6 +45,7 @@ type SnapshotterConfig struct {
 	asyncRemove   bool
 	upperdirLabel bool
 	mountOptions  []string
+	remapIds      bool
 }
 
 // Opt is an option to configure the overlay snapshotter
@@ -77,12 +78,18 @@ func WithMountOptions(options []string) Opt {
 	}
 }
 
+func WithRemapIds(config *SnapshotterConfig) error {
+	config.remapIds = true
+	return nil
+}
+
 type snapshotter struct {
 	root          string
 	ms            *storage.MetaStore
 	asyncRemove   bool
 	upperdirLabel bool
 	options       []string
+	remapIds      bool
 }
 
 // NewSnapshotter returns a Snapshotter which uses overlayfs. The overlayfs
@@ -136,6 +143,7 @@ func NewSnapshotter(root string, opts ...Opt) (snapshots.Snapshotter, error) {
 		asyncRemove:   config.asyncRemove,
 		upperdirLabel: config.upperdirLabel,
 		options:       config.mountOptions,
+		remapIds:      config.remapIds,
 	}, nil
 }
 
