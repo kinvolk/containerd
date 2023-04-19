@@ -21,13 +21,25 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	exec "golang.org/x/sys/execabs"
 	"golang.org/x/sys/unix"
 )
+
+type mountOpt struct {
+	flags   int
+	data    []string
+	losetup bool
+	uidmap  string
+	gidmap  string
+}
 
 var (
 	pagesize              = 4096
@@ -51,45 +63,94 @@ func (m *Mount) mount(target string) (err error) {
 		}
 	}
 	var (
-		chdir   string
-		options = m.Options
+		chdir     string
+		recalcOpt bool
+		usernsFd  int
+		options   = m.Options
 	)
+	opt := parseMountOptions(options)
+	// The only remapping of both GID and UID is supported
+	if opt.uidmap != "" && opt.gidmap != "" {
+		var (
+			childProcCleanUp func()
+		)
+		if usernsFd, childProcCleanUp, err = GetUsernsFD(opt.uidmap, opt.gidmap); err != nil {
+			return err
+		}
+		defer childProcCleanUp()
+
+		// overlay expects lowerdir's to be remapped instead
+		if m.Type == "overlay" {
+			lowerIdx, lowerDirs := findOverlayLowerdirs(options)
+			if lowerIdx == -1 {
+				return fmt.Errorf("failed to parse overlay lowerdir's from given options: %w", err)
+			}
+			tmpLowerdirs, idMapCleanUp, err := prepareIDMappedOverlay(lowerDirs, usernsFd)
+
+			// schedule cleanup function first, so we're able to unmount/remove temporary
+			// directories if prepareIDMappedOverlay failed at the middle game.
+			defer func() {
+				idMapCleanUp()
+				if terr := os.RemoveAll(filepath.Clean(filepath.Join(tmpLowerdirs[0], ".."))); terr != nil {
+					logrus.WithError(terr).Warnf("failed to remove temporary overlay lowerdir's")
+				}
+			}()
+
+			if err != nil {
+				return fmt.Errorf("failed to create idmapped mount: %w", err)
+			}
+
+			// To not meet concurrency issues while using the same lowedirs
+			// for different containers, replace them by temporary directories,
+			options = append(options[:lowerIdx], options[lowerIdx+1:]...)
+			options = append(options, fmt.Sprintf("lowerdir=%s", strings.Join(tmpLowerdirs, ":")))
+
+			if optionsSize(options) >= pagesize-512 {
+				recalcOpt = true
+			} else {
+				opt = parseMountOptions(options)
+			}
+		}
+	}
 
 	// avoid hitting one page limit of mount argument buffer
 	//
 	// NOTE: 512 is a buffer during pagesize check.
 	if m.Type == "overlay" && optionsSize(options) >= pagesize-512 {
 		chdir, options = compactLowerdirOption(options)
+		// recalculate opt in case of lowerdirs have been replaced
+		// by idmapped ones OR idmapped mounts' not used/supported.
+		if recalcOpt || (opt.uidmap == "" || opt.gidmap == "") {
+			opt = parseMountOptions(options)
+		}
 	}
-
-	flags, data, losetup := parseMountOptions(options)
 
 	// propagation types.
 	const ptypes = unix.MS_SHARED | unix.MS_PRIVATE | unix.MS_SLAVE | unix.MS_UNBINDABLE
 
 	// Ensure propagation type change flags aren't included in other calls.
-	oflags := flags &^ ptypes
+	oflags := opt.flags &^ ptypes
 
 	var loopParams LoopParams
-	if losetup {
+	if opt.losetup {
 		loopParams = LoopParams{
 			Readonly:  oflags&unix.MS_RDONLY == unix.MS_RDONLY,
 			Autoclear: true,
 		}
-		loopParams.Direct, data = hasDirectIO(data)
+		loopParams.Direct, opt.data = hasDirectIO(opt.data)
 	}
 
-	dataInStr := strings.Join(data, ",")
+	dataInStr := strings.Join(opt.data, ",")
 	if len(dataInStr) > pagesize {
 		return errors.New("mount options is too long")
 	}
 
-	// In the case of remounting with changed data (data != ""), need to call mount (moby/moby#34077).
-	if flags&unix.MS_REMOUNT == 0 || dataInStr != "" {
+	// In the case of remounting with changed data (dataInStr != ""), need to call mount (moby/moby#34077).
+	if opt.flags&unix.MS_REMOUNT == 0 || dataInStr != "" {
 		// Initial call applying all non-propagation flags for mount
 		// or remount with changed data
 		source := m.Source
-		if losetup {
+		if opt.losetup {
 			loFile, err := setupLoop(m.Source, loopParams)
 			if err != nil {
 				return err
@@ -104,10 +165,10 @@ func (m *Mount) mount(target string) (err error) {
 		}
 	}
 
-	if flags&ptypes != 0 {
+	if opt.flags&ptypes != 0 {
 		// Change the propagation type.
 		const pflags = ptypes | unix.MS_REC | unix.MS_SILENT
-		if err := unix.Mount("", target, "", uintptr(flags&pflags), ""); err != nil {
+		if err := unix.Mount("", target, "", uintptr(opt.flags&pflags), ""); err != nil {
 			return err
 		}
 	}
@@ -117,7 +178,40 @@ func (m *Mount) mount(target string) (err error) {
 		// Remount the bind to apply read only.
 		return unix.Mount("", target, "", uintptr(oflags|unix.MS_REMOUNT), "")
 	}
+
+	// remap non-overlay mount point
+	if opt.uidmap != "" && opt.gidmap != "" && m.Type != "overlay" {
+		if err := IDMapMount(target, target, usernsFd); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func prepareIDMappedOverlay(lowerDirs []string, usernsFd int) (tmpLowerDirs []string, _ func(), _ error) {
+	td, err := os.MkdirTemp(tempMountLocation, "ovl-idmapped")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanUp := func() {
+		for _, lowerDir := range tmpLowerDirs {
+			if err := unix.Unmount(lowerDir, 0); err != nil {
+				logrus.WithError(err).Warnf("failed to unmount temp lowerdir %s", lowerDir)
+			}
+		}
+	}
+	for i, lowerDir := range lowerDirs {
+		tmpLowerDir := filepath.Join(td, strconv.Itoa(i))
+		tmpLowerDirs = append(tmpLowerDirs, tmpLowerDir)
+
+		if err = os.MkdirAll(tmpLowerDir, 0700); err != nil {
+			return nil, cleanUp, fmt.Errorf("failed to create temporary dir: %w", err)
+		}
+		if err = IDMapMount(lowerDir, tmpLowerDir, usernsFd); err != nil {
+			return nil, cleanUp, err
+		}
+	}
+	return tmpLowerDirs, cleanUp, nil
 }
 
 // Unmount the provided mount path with the flags
@@ -208,14 +302,9 @@ func UnmountAll(mount string, flags int) error {
 
 // parseMountOptions takes fstab style mount options and parses them for
 // use with a standard mount() syscall
-func parseMountOptions(options []string) (int, []string, bool) {
-	var (
-		flag    int
-		losetup bool
-		data    []string
-	)
+func parseMountOptions(options []string) (opt mountOpt) {
 	loopOpt := "loop"
-	flags := map[string]struct {
+	flagsMap := map[string]struct {
 		clear bool
 		flag  int
 	}{
@@ -249,19 +338,23 @@ func parseMountOptions(options []string) (int, []string, bool) {
 		// If the option does not exist in the flags table or the flag
 		// is not supported on the platform,
 		// then it is a data value for a specific fs type
-		if f, exists := flags[o]; exists && f.flag != 0 {
+		if f, exists := flagsMap[o]; exists && f.flag != 0 {
 			if f.clear {
-				flag &^= f.flag
+				opt.flags &^= f.flag
 			} else {
-				flag |= f.flag
+				opt.flags |= f.flag
 			}
 		} else if o == loopOpt {
-			losetup = true
+			opt.losetup = true
+		} else if strings.HasPrefix(o, "uidmap=") {
+			opt.uidmap = strings.TrimPrefix(o, "uidmap=")
+		} else if strings.HasPrefix(o, "gidmap=") {
+			opt.gidmap = strings.TrimPrefix(o, "gidmap=")
 		} else {
-			data = append(data, o)
+			opt.data = append(opt.data, o)
 		}
 	}
-	return flag, data, losetup
+	return
 }
 
 func hasDirectIO(opts []string) (bool, []string) {
