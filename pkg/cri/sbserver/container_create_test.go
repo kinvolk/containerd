@@ -465,6 +465,14 @@ func TestBaseRuntimeSpec(t *testing.T) {
 
 func TestLinuxContainerMounts(t *testing.T) {
 	const testSandboxID = "test-id"
+	idmap := []*runtime.IDMapping{
+		{
+			ContainerId: 0,
+			HostId:      100,
+			Length:      1,
+		},
+	}
+
 	for _, test := range []struct {
 		desc            string
 		statFn          func(string) (os.FileInfo, error)
@@ -534,6 +542,51 @@ func TestLinuxContainerMounts(t *testing.T) {
 				},
 			},
 		},
+		{
+			desc: "should setup uidMappings/gidMappings when userns is used",
+			securityContext: &runtime.LinuxContainerSecurityContext{
+				NamespaceOptions: &runtime.NamespaceOption{
+					UsernsOptions: &runtime.UserNamespace{
+						Mode: runtime.NamespaceMode_POD,
+						Uids: idmap,
+						Gids: idmap,
+					},
+				},
+			},
+			expectedMounts: []*runtime.Mount{
+				{
+					ContainerPath:  "/etc/hostname",
+					HostPath:       filepath.Join(testRootDir, sandboxesDir, testSandboxID, "hostname"),
+					Readonly:       false,
+					SelinuxRelabel: true,
+					UidMappings:    idmap,
+					GidMappings:    idmap,
+				},
+				{
+					ContainerPath:  "/etc/hosts",
+					HostPath:       filepath.Join(testRootDir, sandboxesDir, testSandboxID, "hosts"),
+					Readonly:       false,
+					SelinuxRelabel: true,
+					UidMappings:    idmap,
+					GidMappings:    idmap,
+				},
+				{
+					ContainerPath:  resolvConfPath,
+					HostPath:       filepath.Join(testRootDir, sandboxesDir, testSandboxID, "resolv.conf"),
+					Readonly:       false,
+					SelinuxRelabel: true,
+					UidMappings:    idmap,
+					GidMappings:    idmap,
+				},
+				{
+					ContainerPath:  "/dev/shm",
+					HostPath:       filepath.Join(testStateDir, sandboxesDir, testSandboxID, "shm"),
+					Readonly:       false,
+					SelinuxRelabel: true,
+				},
+			},
+		},
+
 		{
 			desc: "should use host /dev/shm when host ipc is set",
 			securityContext: &runtime.LinuxContainerSecurityContext{
