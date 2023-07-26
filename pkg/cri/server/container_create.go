@@ -332,6 +332,9 @@ func (c *criService) volumeMounts(containerRootDir string, criMounts []*runtime.
 		}
 		volumeID := util.GenerateID()
 		src := filepath.Join(containerRootDir, "volumes", volumeID)
+		if !filepath.IsAbs(dst) && goruntime.GOOS != "windows" {
+			dst = filepath.Join("/", dst)
+		}
 		// addOCIBindMounts will create these volumes.
 		mounts = append(mounts, &runtime.Mount{
 			ContainerPath:  dst,
