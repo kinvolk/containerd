@@ -133,6 +133,10 @@ func NewContainer(ctx context.Context, platform stdio.Platform, r *task.CreateTa
 		return nil, errdefs.ToGRPC(err)
 	}
 	if err := p.Create(ctx, config); err != nil {
+		data, werr := os.ReadFile(r.Bundle + "/log.json")
+		if werr == nil {
+			log.G(ctx).WithError(err).Warn(string(data))
+		}
 		return nil, errdefs.ToGRPC(err)
 	}
 	container := &Container{
