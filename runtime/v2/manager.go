@@ -19,6 +19,7 @@ package v2
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -42,6 +43,9 @@ import (
 	"github.com/containerd/containerd/runtime"
 	shimbinary "github.com/containerd/containerd/runtime/v2/shim"
 	"github.com/containerd/containerd/sandbox"
+	"github.com/containerd/typeurl/v2"
+	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/opencontainers/runtime-spec/specs-go/features"
 )
 
 // Config for the v2 runtime
@@ -420,6 +424,10 @@ func (m *TaskManager) Create(ctx context.Context, taskID string, opts runtime.Cr
 		return nil, err
 	}
 
+	if err := m.validateRuntimeFeatures(ctx, opts); err != nil {
+		return nil, fmt.Errorf("failed to validate OCI runtime features: %w", err)
+	}
+
 	t, err := shimTask.Create(ctx, opts)
 	if err != nil {
 		// NOTE: ctx contains required namespace information.
@@ -531,4 +539,54 @@ func (m *TaskManager) RuntimeInfo(ctx context.Context, runtimeName string, runti
 		return nil, fmt.Errorf("failed to unmarshal stdout from %v into %T: %w", cmd.Args, &info, err)
 	}
 	return &info, nil
+}
+
+func (m *TaskManager) validateRuntimeFeatures(ctx context.Context, opts runtime.CreateOpts) error {
+	// Get a typed version of the spec.
+	var spec specs.Spec
+	if err := typeurl.UnmarshalTo(opts.Spec, &spec); err != nil {
+		return fmt.Errorf("unmarshal spec: %w", err)
+	}
+
+	// Get features from runtime.
+	rInfo, err := m.RuntimeInfo(ctx, opts.Runtime, nil)
+	if err != nil {
+		return fmt.Errorf("runtime info: %w", err)
+	}
+
+	feat, err := typeurl.UnmarshalAny(rInfo.Features)
+	if err != nil {
+		return fmt.Errorf("unmarshal runtime features: %w", err)
+	}
+	features, ok := feat.(*features.Features)
+	if !ok {
+		return fmt.Errorf("invalid features type: %T", rInfo.Features)
+	}
+
+	if err := validateIDMapMounts(spec, features); err != nil {
+		return fmt.Errorf("idmap mounts: %w", err)
+	}
+	return nil
+}
+
+func validateIDMapMounts(spec specs.Spec, features *features.Features) error {
+	var idmapUsed bool
+	for _, m := range spec.Mounts {
+		if m.UIDMappings != nil || m.GIDMappings != nil {
+			idmapUsed = true
+			break
+		}
+	}
+	if !idmapUsed {
+		return nil
+	}
+
+	if features.Linux.MountExtensions == nil || features.Linux.MountExtensions.IDMap == nil {
+		return errors.New("missing `mountExtensions.idmap` entry in `features` command")
+
+	}
+	if enabled := features.Linux.MountExtensions.IDMap.Enabled; enabled == nil || !*enabled {
+		return errors.New("not supported or disabled")
+	}
+	return nil
 }
