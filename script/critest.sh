@@ -70,6 +70,8 @@ ls /etc/cni/net.d
     --state ${BDIR}/state \
     --log-level debug &> "$report_dir/containerd.log" &
 
+containerd_pid=$!
+
 # Make sure containerd is ready before calling critest.
 for i in $(seq 1 10)
 do
@@ -77,3 +79,5 @@ do
 done
 
 critest --report-dir "$report_dir" --runtime-endpoint=unix:///${BDIR}/c.sock --parallel=8 "${EXTRA_CRITEST_OPTIONS:-""}"
+
+kill $containerd_pid
